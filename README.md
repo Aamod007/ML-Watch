@@ -1,125 +1,213 @@
-# ML-Watch
+<div align="center">
+  <h1>mlwatch 🔭</h1>
+  <p><b>A framework-agnostic ML monitoring SDK tailored for production cloud environments.</b></p>
+  <p>
+    <a href="https://pypi.org/project/mlwatch/"><img src="https://img.shields.io/pypi/v/mlwatch?color=blue&label=PyPI" alt="PyPI version" /></a>
+    <a href="https://github.com/Aamod007/ML-Watch/actions"><img src="https://img.shields.io/github/actions/workflow/status/Aamod007/ML-Watch/test.yml?branch=main" alt="Build Status" /></a>
+    <a href="https://python.org"><img src="https://img.shields.io/pypi/pyversions/mlwatch" alt="Python Versions" /></a>
+    <a href="https://github.com/Aamod007/ML-Watch/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" /></a>
+  </p>
+  <p>
+    <a href="#key-features">Key Features</a> •
+    <a href="#installation">Installation</a> •
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#configuration">Configuration</a> •
+    <a href="#integrations">Integrations</a>
+  </p>
+</div>
 
-`mlwatch` is an open-source, framework-agnostic Python library for monitoring machine learning models in production cloud environments. It tracks data drift, prediction degradation, and inference performance, logging metrics safely to AWS CloudWatch, GCP Cloud Monitoring, or Azure Monitor.
+---
 
-## Features
+`mlwatch` is a production-grade, open-source Python library designed to give you end-to-end observability of your machine learning models in production without heavy operational overhead.
 
-- **Data Drift Detection**: Detect input feature shifts using KS-Test, PSI, and Chi-Square.
-- **Performance Metrics**: Track latency, throughput (RPS), and error rates.
-- **OOD Detection**: Catch anomalies before inference with Isolation Forest.
-- **Cloud Integrations**: Send metrics natively to AWS, GCP, and Azure.
-- **Zero-overhead Integration**: Use decorators or context managers to add monitoring without blocking inference.
-- **Supported Frameworks**: PyTorch, TensorFlow/Keras, and Scikit-learn.
+Whether your models are built with **PyTorch**, **TensorFlow/Keras**, or **Scikit-Learn**, `mlwatch` plugs seamlessly into your inference path to monitor data drift, track prediction degradation, and alert on system anomalies. It natively exports metrics to **AWS CloudWatch**, **GCP Cloud Monitoring**, or **Azure Monitor**—all while adding virtually zero latency to your predictions via asynchronous background processing.
 
-## Installation
+## 🔥 Key Features
 
-Install the base library for local monitoring:
+- **📊 Comprehensive Drift Detection**: Out-of-the-box support for Population Stability Index (PSI), Kolmogorov-Smirnov (KS-Test), and Chi-Square tests to monitor feature and prediction drift.
+- **🛡️ Out-of-Distribution (OOD) Protection**: Built-in anomaly detection (Isolation Forests & Z-score) catches invalid input data before it hits your inference engine.
+- **⚡ Performance Observability**: Tracks throughput (RPS), inference latency (p95, p99), error rates, and resource utilization automatically.
+- **☁️ Cloud-Native Metric Export**: First-class, lazy-loaded exporters for AWS, GCP, and Azure right out of the box. No external agents required.
+- **🔗 Framework-Agnostic**: Native hooks and callbacks for **PyTorch**, **TensorFlow**, and **Scikit-Learn**. Zero architectural refactoring necessary.
+- **🚨 Configurable Alerting**: Define granular metric thresholds and deliver real-time notifications via Slack, PagerDuty, or custom webhooks.
+- **🚀 Ultra-low Overhead**: Asynchronous, fail-open design guarantees that monitoring will never block or crash your critical inference path.
+
+---
+
+## 🛠️ Installation
+
+`mlwatch` requires Python `3.8+`. You can install the base package (capable of local JSON/stdout logging) directly via `pip`:
 
 ```bash
 pip install mlwatch
 ```
 
-Install with specific cloud providers:
+To enable cloud metric exportation, install the corresponding extras. We suggest only installing the necessary dependencies to keep your Docker images lightweight:
 
 ```bash
-pip install mlwatch[aws]        # AWS CloudWatch Support
-pip install mlwatch[gcp]        # GCP Cloud Monitoring Support
-pip install mlwatch[azure]      # Azure Monitor Support
-pip install mlwatch[all]        # All Cloud Providers Supported
+pip install 'mlwatch[aws]'      # AWS CloudWatch support
+pip install 'mlwatch[gcp]'      # GCP Cloud Monitoring support
+pip install 'mlwatch[azure]'    # Azure Monitor support
+pip install 'mlwatch[all]'      # Install all available cloud exporters
 ```
 
-## Quick Start
+---
 
-### Core API Integration
+## 🚀 Quick Start
+
+`mlwatch` integrates into your existing prediction code with minimal changes. Below are examples covering the primary supported ML frameworks.
+
+### Scikit-Learn
+
+Wrap any Scikit-Learn `Pipeline` or `Estimator` using `MonitoredPipeline`:
 
 ```python
-from mlwatch import ModelMonitor
 import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from mlwatch.frameworks.sklearn import MonitoredPipeline
 
-# Load your baseline (training data)
+# Load training data to serve as your statistical baseline
 X_train = np.random.randn(1000, 10)
 
-# Initialize the monitor
-monitor = ModelMonitor(
-    model=my_model,               # Your instantiated PyTorch/TF/Sklearn model
-    framework="sklearn",          # "pytorch" | "tensorflow" | "sklearn"
-    cloud="local",                # "aws" | "gcp" | "azure" | "local"
-    baseline_data=X_train,
-    thresholds={"psi": 0.2, "latency_p95_ms": 300}
+# Instantiate and fit your typical sklearn pipeline
+model = RandomForestClassifier().fit(X_train, np.random.randint(0, 2, 1000))
+
+# Wrap the model for monitoring
+monitored_model = MonitoredPipeline(
+    estimator=model,
+    cloud="aws",                  # Export metrics to AWS CloudWatch
+    baseline_data=X_train,        # Calibrate drift baseline
+    thresholds={"psi": 0.20}      # Alert if PSI exceeds 0.20
 )
 
-# Use it as a drop-in replacement for your predict method
-X_input = np.random.randn(10, 10)
-predictions = monitor.predict(X_input)
+# Use exactly as before; monitoring happens asynchronously
+X_prod = np.random.randn(10, 10)
+predictions = monitored_model.predict(X_prod)
 ```
 
-### PyTorch using Hook integration
+### PyTorch
+
+`mlwatch` automatically registers forward hooks to inspect your `nn.Module` tensors during inference:
 
 ```python
 from mlwatch import ModelMonitor
+import torch
 
-# mlwatch automatically registers PyTorch forward hooks
-monitor = ModelMonitor(model=my_pytorch_model, framework="pytorch", cloud="aws")
+model = get_my_pytorch_model()
+X_baseline = torch.randn(1000, 10)
 
-# Running prediction normally fires hooks automatically
-output = monitor.predict(tensor_input)
+monitor = ModelMonitor(
+    model=model, 
+    framework="pytorch", 
+    cloud="gcp",
+    baseline_data=X_baseline
+)
+
+# Inference triggers tensor inspection automatically
+output = monitor.predict(torch.randn(1, 10))
 ```
 
-### TensorFlow / Keras Callback
+### TensorFlow / Keras
+
+Inject the `MonitorCallback` directly into Keras’ `predict()` lifecycle:
 
 ```python
 from mlwatch.frameworks.tensorflow import MonitorCallback
+import numpy as np
 
-callback = MonitorCallback(cloud="gcp", baseline=X_train)
-model.predict(X, callbacks=[callback])
-```
+model = get_my_keras_model()
+X_baseline = np.random.randn(1000, 10)
 
-### Scikit-Learn Wrapper
+# Initialize the callback
+callback = MonitorCallback(
+    cloud="azure", 
+    baseline=X_baseline
+)
 
-```python
-from mlwatch.frameworks.sklearn import MonitoredPipeline
-
-monitored_pipeline = MonitoredPipeline(my_pipeline, cloud="azure", baseline=X_train)
-predictions = monitored_pipeline.predict(X_test)
-```
-
-## Configuration
-
-The `ModelMonitor` has several configurable parameters allowing targeted functionality based on your application's setup:
-
-```python
-ModelMonitor(
-    model,                        
-    framework="pytorch",          
-    cloud="aws",                  
-    baseline_data=X_train,        
-    thresholds={                  
-        "psi": 0.2,               
-        "ks_pvalue": 0.05,        
-        "latency_p95_ms": 500,    
-        "error_rate": 0.01,       
-        "ood_rate": 0.05,         
-    },
-    sample_rate=1.0,              # Adjust if throughput is massive
-    async_export=True,            # Ensure non-blocking inference
-    log_inputs=False,             # Disable PII logging
-    namespace="mlwatch",          # Custom metric namespace
+# Pass callback to model.predict
+predictions = model.predict(
+    np.random.randn(1, 10), 
+    callbacks=[callback]
 )
 ```
 
-## Alerting
+### Context Manager API (Custom Usage)
 
-You can configure a webhook to receive real-time notifications on drift or degradation threshold breaches:
+If you are using a custom framework or wish to manually enforce monitoring scope, use the `monitor_session` context manager:
+
+```python
+from mlwatch import monitor_session
+
+X_batch = np.random.randn(32, 10)
+
+with monitor_session(model, framework="custom", cloud="local", baseline_data=X_baseline) as session:
+    predictions = custom_predict_routine(X_batch)
+    # Allows manual logging of arbitrary metrics
+    session.log_metric("custom_confidence_score", 0.94)
+```
+
+---
+
+## ⚙️ Configuration
+
+`ModelMonitor` exposes extensive configuration to adapt to high-scale production systems:
 
 ```python
 monitor = ModelMonitor(
     model=my_model,
-    framework="pytorch",
+    framework="sklearn",
     cloud="aws",
-    alert_webhook="https://example.com/alerts/webhook"
+    
+    # [Data Setup]
+    baseline_data=X_train,            # Array-like used to calculate baseline distributions
+    
+    # [Alerting & Thresholds]
+    alert_webhook="https://hooks.slack.com/...", # Slack, PagerDuty, or HTTP webhook
+    thresholds={
+        "psi": 0.2,                   # Population Stability Index limit
+        "ks_pvalue": 0.05,            # Kolmogorov-Smirnov test p-value
+        "latency_p95_ms": 500,        # P95 latency (milliseconds) max limit
+        "error_rate": 0.01,           # Global error rate cap
+        "ood_rate": 0.05,             # Out-of-Distribution input limit
+    },
+    
+    # [Infrastructure & Performance]
+    sample_rate=0.2,                  # Only monitor 20% of traffic (for high-throughput)
+    async_export=True,                # Keep to True to prevent blocking prediction
+    log_inputs=False,                 # Set False (default) to ensure PII remains secure
+    namespace="mlwatch-prod",         # Metric namespace grouped in your Cloud provider
 )
 ```
 
-## License
+---
 
-This project is licensed under the Apache 2.0 License.
+## ☁️ Integrations
+
+### AWS CloudWatch
+When `cloud="aws"`, `mlwatch` utilizes `boto3`. Make sure your environment has proper access:
+- Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` 
+- Or attach an **IAM Role** with `CloudWatch:PutMetricData` permission.
+
+### GCP Cloud Monitoring
+When `cloud="gcp"`, `mlwatch` authenticates using default application credentials.
+- Ensure the `GOOGLE_APPLICATION_CREDENTIALS` environment variable is pointing to a valid service account JSON key containing the `Monitoring Metric Writer` role.
+
+### Azure Monitor
+When `cloud="azure"`, `mlwatch` pushes custom metrics using Azure's Ingestion API.
+- Assumes `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are configured to an app registration with the necessary ingestion privileges.
+
+---
+
+## 🤝 Contributing
+
+We welcome community contributions! `mlwatch` aims to expand support to more frameworks and statistical tests. 
+
+1. **Clone the repository:** `git clone https://github.com/Aamod007/ML-Watch.git`
+2. **Install dependencies:** `pip install -e .[dev,all]`
+3. **Run tests:** `pytest tests/ -v`
+
+---
+
+## 📜 License
+
+This project is licensed under the [Apache 2.0 License](https://github.com/Aamod007/ML-Watch/blob/main/LICENSE) - see the LICENSE file for details.
